@@ -4,16 +4,20 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Edward OS</title>
+<!-- iPhone home screen: icon + fullscreen app mode -->
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="icon" type="image/png" href="icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Edward OS">
 <!--
   ============================================
-  Edward OS v0.5
-  Changes from v0.4:
-  - KST clock now shows seconds, ticking live
-  - "Today's Line" renamed to "Motivation of the Day"
-  - NEW: Deadlines — enter anything with a due date
-    (name, due, genre). The app computes D-day,
-    sorts by urgency, flags what to start first,
-    and can push a deadline into Today as a task.
+  Edward OS v0.6
+  Changes from v0.5:
+  - NEW: Passcode lock screen. First run: set a passcode
+    (enter twice). After that: required on each new visit.
+    NOTE: casual-access barrier, not encryption.
+    Forgot passcode = clear browser data (keep Exports!).
   ============================================
 -->
 <style>
@@ -199,9 +203,38 @@
     background: #ffffff22; color: #fff;
   }
   .timerbar button.stop { background: #ffffff11; color: #ffffffaa; }
+
+  /* ---------- lock screen ---------- */
+  .lock {
+    position: fixed; inset: 0; background: var(--bg); z-index: 999;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .lockbox { text-align: center; width: 260px; }
+  .lockbox h1 { font-size: 22px; font-weight: 800; margin-bottom: 6px; }
+  .lockbox p { font-size: 13.5px; color: var(--muted); margin-bottom: 16px; }
+  .lockbox input {
+    width: 100%; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+    font-size: 18px; text-align: center; outline: none; letter-spacing: 4px; background: var(--card);
+  }
+  .lockbox input:focus { border-color: var(--accent); }
+  .lockbox button {
+    width: 100%; margin-top: 10px; border: none; border-radius: 12px; padding: 12px;
+    font-size: 15px; font-weight: 700; color: #fff; background: var(--accent); cursor: pointer;
+  }
 </style>
 </head>
 <body>
+
+<!-- lock screen: secret-question gate (casual-access barrier, not encryption) -->
+<div class="lock" id="lock">
+  <div class="lockbox">
+    <h1>잠깐! ✋</h1>
+    <p id="lockmsg">Loading…</p>
+    <input type="password" id="lockinput" autocomplete="off"
+           onkeydown="if(event.key==='Enter')unlock()">
+    <button onclick="unlock()">Enter</button>
+  </div>
+</div>
 
 <div class="top">
   <div>
@@ -304,6 +337,85 @@
 </div>
 
 <script>
+/* ============ lock: secret-question gate ============ */
+const LOCKQ = 'edwardOSLockQ';    // the question (plain text — it's shown on screen)
+const LOCKA = 'edwardOSLockA';    // the answer (hashed)
+let setupStep = 0, tmpQ = '', tmpA = null;
+
+function normAnswer(s) { return s.trim().toLowerCase().replace(/\s+/g, ' '); }
+
+async function hashText(s) {
+  try {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('eos:' + s));
+    return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2,'0')).join('');
+  } catch(e) {
+    let h = 5381;
+    for (const c of 'eos:' + s) h = ((h * 33) ^ c.charCodeAt(0)) >>> 0;
+    return 'f' + h.toString(16);
+  }
+}
+
+async function unlock() {
+  const input = document.getElementById('lockinput');
+  const msg = document.getElementById('lockmsg');
+  const v = input.value;
+  if (!v) return;
+
+  // ----- first-time setup: question -> answer -> confirm -----
+  if (!localStorage.getItem(LOCKQ)) {
+    if (setupStep === 0) {
+      tmpQ = v.trim();
+      msg.textContent = '그 질문의 답은?';
+      input.type = 'password'; input.value = '';
+      setupStep = 1;
+      return;
+    }
+    if (setupStep === 1) {
+      tmpA = await hashText(normAnswer(v));
+      msg.textContent = '답을 한 번 더 (확인)';
+      input.value = '';
+      setupStep = 2;
+      return;
+    }
+    if (await hashText(normAnswer(v)) === tmpA) {
+      localStorage.setItem(LOCKQ, tmpQ);
+      localStorage.setItem(LOCKA, tmpA);
+      openApp();
+    } else {
+      msg.textContent = '답이 서로 달라요 — 답을 다시 입력';
+      input.value = '';
+      setupStep = 1;
+    }
+    return;
+  }
+
+  // ----- normal visit: answer the question -----
+  if (await hashText(normAnswer(v)) === localStorage.getItem(LOCKA)) openApp();
+  else { msg.textContent = localStorage.getItem(LOCKQ) + ' (땡. 다시)'; input.value = ''; }
+}
+
+function openApp() {
+  document.getElementById('lock').style.display = 'none';
+  sessionStorage.setItem('eosUnlocked', '1');
+}
+
+function initLock() {
+  if (sessionStorage.getItem('eosUnlocked') === '1') {
+    document.getElementById('lock').style.display = 'none';
+    return;
+  }
+  const msg = document.getElementById('lockmsg');
+  const input = document.getElementById('lockinput');
+  if (!localStorage.getItem(LOCKQ)) {
+    msg.textContent = '첫 설정 — 나만 답할 수 있는 질문을 입력하세요';
+    input.type = 'text';   // question is typed visibly
+  } else {
+    msg.textContent = localStorage.getItem(LOCKQ);
+    input.type = 'password';
+  }
+  setTimeout(() => input.focus(), 100);
+}
+
 /* ============ data ============ */
 const KEY = 'edwardOS';
 let state = load();
@@ -635,6 +747,7 @@ document.getElementById('oneinput').addEventListener('input', e => {
   state.one = e.target.value; state.oneDate = todayStr(); save();
 });
 
+initLock();
 render();
 loadWeather();
 setInterval(renderClock, 1000);   // live seconds
