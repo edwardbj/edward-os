@@ -243,12 +243,10 @@
     <input type="text" id="newdl" placeholder="What must be done? (name & scope)" onkeydown="if(event.key==='Enter')addDeadline()">
     <input type="date" id="newdldate">
     <select id="newdlgenre">
-      <option value="ERP">Work · ERP</option>
-      <option value="AI">Work · AI</option>
-      <option value="Web">Work · Website</option>
-      <option value="Mkt">Work · Marketing</option>
-      <option value="Work">Work · Other</option>
-      <option value="Side">Side hustle</option>
+      <option value="AX">Work · AX</option>
+      <option value="CEO">Work · CEO</option>
+      <option value="General">Work · General</option>
+      <option value="PlanE">Plan E</option>
       <option value="Growth">Growth</option>
       <option value="Personal">Personal</option>
     </select>
@@ -266,7 +264,7 @@
     <input type="text" id="newtask" placeholder="Add a task…" onkeydown="if(event.key==='Enter')addTask()">
     <select id="newdomain">
       <option value="D1">Work</option>
-      <option value="D2">Side</option>
+      <option value="D2">Plan E</option>
       <option value="D3" selected>Growth</option>
       <option value="P">Personal</option>
     </select>
@@ -366,9 +364,14 @@ async function loadWeather() {
 }
 
 /* ============ deadlines ============ */
-const GENRE_DOMAIN = { ERP:'D1', AI:'D1', Web:'D1', Mkt:'D1', Work:'D1', Side:'D2', Growth:'D3', Personal:'P' };
-const GENRE_LABEL = { ERP:'Work · ERP', AI:'Work · AI', Web:'Work · Website', Mkt:'Work · Marketing',
-                      Work:'Work', Side:'Side', Growth:'Growth', Personal:'Personal' };
+const GENRE_DOMAIN = { AX:'D1', CEO:'D1', General:'D1', PlanE:'D2', Growth:'D3', Personal:'P',
+                       /* legacy values from earlier versions */
+                       ERP:'D1', AI:'D1', Web:'D1', Mkt:'D1', Work:'D1', Side:'D2' };
+const GENRE_LABEL = { AX:'Work · AX', CEO:'Work · CEO', General:'Work · General', PlanE:'Plan E',
+                      Growth:'Growth', Personal:'Personal',
+                      /* legacy labels */
+                      ERP:'Work · ERP', AI:'Work · AI', Web:'Work · Website', Mkt:'Work · Marketing',
+                      Work:'Work', Side:'Plan E' };
 
 function addDeadline() {
   const title = document.getElementById('newdl').value.trim();
@@ -556,7 +559,7 @@ function importData(ev) {
 }
 
 /* ============ render ============ */
-const DOMAIN_LABEL = { D1: 'Work', D2: 'Side', D3: 'Growth', P: 'Personal' };
+const DOMAIN_LABEL = { D1: 'Work', D2: 'Plan E', D3: 'Growth', P: 'Personal' };
 
 function render() {
   rollover();
