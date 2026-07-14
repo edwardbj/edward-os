@@ -47,10 +47,23 @@
   }
 
   /* ---------- top bar ---------- */
-  .top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
+  .top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
   .top h1 { font-size: 17px; font-weight: 800; letter-spacing: -0.3px; }
-  .top .date { font-size: 13px; color: var(--muted); margin-top: 3px; }
-  .top .env { font-size: 12.5px; color: var(--faint); margin-top: 2px; font-variant-numeric: tabular-nums; }
+
+  /* ---------- hero: time / date / weather ---------- */
+  .hero {
+    display: flex; justify-content: space-between; align-items: center;
+    background: linear-gradient(135deg, #064e3b, #065f46 55%, #047857);
+    color: #fff; border-radius: 18px; padding: 18px 20px; margin-bottom: 12px;
+    box-shadow: 0 6px 24px rgba(6, 78, 59, .25);
+  }
+  .bigtime { font-size: 36px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: 1px; line-height: 1; }
+  .bigtime .tz { font-size: 12px; font-weight: 700; color: #aaff00; margin-left: 7px; letter-spacing: 1.5px; }
+  .bigdate { font-size: 14px; color: #bbf7d0; margin-top: 8px; font-weight: 600; }
+  .hero-right { text-align: right; flex-shrink: 0; margin-left: 12px; }
+  .weather { font-size: 21px; font-weight: 800; white-space: nowrap; }
+  .weather .wi { font-size: 26px; vertical-align: -2px; margin-right: 4px; }
+  .wcity { font-size: 11px; color: #a7f3d0; margin-top: 4px; letter-spacing: 2px; font-weight: 700; }
   .chips { display: flex; gap: 6px; }
   .chip {
     font-size: 12px; font-weight: 600; color: var(--muted);
@@ -218,18 +231,21 @@
   }
   .lockbox input:focus { border-color: var(--accent); }
   .lockbox button {
-    width: 100%; margin-top: 10px; border: none; border-radius: 12px; padding: 12px;
-    font-size: 15px; font-weight: 700; color: #fff; background: var(--accent); cursor: pointer;
+    margin-top: 12px; border: none; border-radius: 99px; padding: 8px 22px;
+    font-size: 13px; font-weight: 700; color: #1a2e05; cursor: pointer;
+    background: #aaff00;   /* 형광연두 */
+    box-shadow: 0 0 12px rgba(170,255,0,.45);
   }
+  .lockbox button:active { transform: scale(.96); }
 </style>
 </head>
 <body>
 
-<!-- lock screen: secret-question gate (casual-access barrier, not encryption) -->
+<!-- lock screen: 👻 gate (casual-access barrier, not encryption) -->
 <div class="lock" id="lock">
   <div class="lockbox">
-    <h1>잠깐! ✋</h1>
-    <p id="lockmsg">Loading…</p>
+    <div style="font-size:56px; margin-bottom:14px;">👻</div>
+    <p id="lockmsg" style="min-height:18px;"></p>
     <input type="password" id="lockinput" autocomplete="off"
            onkeydown="if(event.key==='Enter')unlock()">
     <button onclick="unlock()">Enter</button>
@@ -237,14 +253,21 @@
 </div>
 
 <div class="top">
-  <div>
-    <h1>Edward OS</h1>
-    <div class="date" id="datetext"></div>
-    <div class="env"><span id="ktime"></span> KST<span id="temp"></span></div>
-  </div>
+  <h1>Edward OS</h1>
   <div class="chips">
     <span class="chip">Lv <b id="level">1</b></span>
     <span class="chip">🔥 <b id="streak">0</b></span>
+  </div>
+</div>
+
+<div class="hero">
+  <div>
+    <div class="bigtime"><span id="ktime">--:--:--</span><span class="tz">KST</span></div>
+    <div class="bigdate" id="datetext"></div>
+  </div>
+  <div class="hero-right">
+    <div class="weather"><span class="wi" id="wicon">☀️</span><span id="temp">--°</span></div>
+    <div class="wcity">SEOUL</div>
   </div>
 </div>
 
@@ -337,10 +360,9 @@
 </div>
 
 <script>
-/* ============ lock: secret-question gate ============ */
-const LOCKQ = 'edwardOSLockQ';    // the question (plain text — it's shown on screen)
+/* ============ lock: 👻 gate ============ */
 const LOCKA = 'edwardOSLockA';    // the answer (hashed)
-let setupStep = 0, tmpQ = '', tmpA = null;
+let tmpA = null;                  // first-time setup: enter answer twice
 
 function normAnswer(s) { return s.trim().toLowerCase().replace(/\s+/g, ' '); }
 
@@ -361,37 +383,28 @@ async function unlock() {
   const v = input.value;
   if (!v) return;
 
-  // ----- first-time setup: question -> answer -> confirm -----
-  if (!localStorage.getItem(LOCKQ)) {
-    if (setupStep === 0) {
-      tmpQ = v.trim();
-      msg.textContent = '그 질문의 답은?';
-      input.type = 'password'; input.value = '';
-      setupStep = 1;
-      return;
-    }
-    if (setupStep === 1) {
+  // ----- first-time setup: answer, then confirm -----
+  if (!localStorage.getItem(LOCKA)) {
+    if (tmpA === null) {
       tmpA = await hashText(normAnswer(v));
-      msg.textContent = '답을 한 번 더 (확인)';
+      msg.textContent = '한 번 더';
       input.value = '';
-      setupStep = 2;
       return;
     }
     if (await hashText(normAnswer(v)) === tmpA) {
-      localStorage.setItem(LOCKQ, tmpQ);
       localStorage.setItem(LOCKA, tmpA);
       openApp();
     } else {
-      msg.textContent = '답이 서로 달라요 — 답을 다시 입력';
+      tmpA = null;
+      msg.textContent = '서로 달라요 — 처음부터';
       input.value = '';
-      setupStep = 1;
     }
     return;
   }
 
-  // ----- normal visit: answer the question -----
+  // ----- normal visit -----
   if (await hashText(normAnswer(v)) === localStorage.getItem(LOCKA)) openApp();
-  else { msg.textContent = localStorage.getItem(LOCKQ) + ' (땡. 다시)'; input.value = ''; }
+  else { input.value = ''; msg.textContent = '👻…'; }
 }
 
 function openApp() {
@@ -404,16 +417,10 @@ function initLock() {
     document.getElementById('lock').style.display = 'none';
     return;
   }
-  const msg = document.getElementById('lockmsg');
-  const input = document.getElementById('lockinput');
-  if (!localStorage.getItem(LOCKQ)) {
-    msg.textContent = '첫 설정 — 나만 답할 수 있는 질문을 입력하세요';
-    input.type = 'text';   // question is typed visibly
-  } else {
-    msg.textContent = localStorage.getItem(LOCKQ);
-    input.type = 'password';
+  if (!localStorage.getItem(LOCKA)) {
+    document.getElementById('lockmsg').textContent = '답 설정 (처음 한 번)';
   }
-  setTimeout(() => input.focus(), 100);
+  setTimeout(() => document.getElementById('lockinput').focus(), 100);
 }
 
 /* ============ data ============ */
@@ -467,12 +474,23 @@ function renderClock() {
   document.getElementById('ktime').textContent =
     new Date().toLocaleTimeString('en-GB', { timeZone:'Asia/Seoul', hour:'2-digit', minute:'2-digit', second:'2-digit' });
 }
+function weatherEmoji(code) {
+  if (code === 0) return '☀️';
+  if (code <= 2) return '🌤️';
+  if (code === 3) return '☁️';
+  if (code <= 48) return '🌫️';
+  if (code <= 67) return '🌧️';
+  if (code <= 77) return '❄️';
+  if (code <= 82) return '🌦️';
+  return '⛈️';
+}
 async function loadWeather() {
   try {
-    const r = await fetch('https://api.open-meteo.com/v1/forecast?latitude=37.5665&longitude=126.9780&current=temperature_2m');
+    const r = await fetch('https://api.open-meteo.com/v1/forecast?latitude=37.5665&longitude=126.9780&current=temperature_2m,weather_code');
     const j = await r.json();
-    document.getElementById('temp').textContent = ' · Seoul ' + Math.round(j.current.temperature_2m) + '°C';
-  } catch(e) { /* offline — show nothing */ }
+    document.getElementById('temp').textContent = Math.round(j.current.temperature_2m) + '°C';
+    document.getElementById('wicon').textContent = weatherEmoji(j.current.weather_code);
+  } catch(e) { /* offline — keep placeholders */ }
 }
 
 /* ============ deadlines ============ */
