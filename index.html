@@ -271,15 +271,13 @@
   <div class="lockbox">
     <div style="font-size:44px; margin-bottom:10px;">☁️</div>
     <p id="loginmsg">이메일로 입장 링크를 보내드려요 — 클릭하면 이 기기가 연결됩니다</p>
-    <input type="email" id="loginemail" placeholder="you@email.com" style="letter-spacing:0;"
-           onkeydown="if(event.key==='Enter')sendLink()">
-    <button onclick="sendLink()">Send code</button>
-    <div id="coderow" style="display:none; margin-top:10px;">
-      <input type="text" id="logincode" placeholder="메일 속 6자리 코드" inputmode="numeric"
-             style="letter-spacing:4px;" onkeydown="if(event.key==='Enter')verifyCode()">
-      <button onclick="verifyCode()" style="margin-top:8px;">Verify</button>
-    </div>
+    <input type="email" id="loginemail" placeholder="you@email.com" style="letter-spacing:0;">
+    <input type="password" id="loginpw" placeholder="Password" style="letter-spacing:2px; margin-top:8px;"
+           onkeydown="if(event.key==='Enter')pwSignIn()">
+    <button onclick="pwSignIn()">Sign in</button>
     <p style="margin-top:12px;font-size:11.5px;color:var(--faint);cursor:pointer;text-decoration:underline;"
+       onclick="sendLink()">비밀번호가 아직 없으면: 이메일 링크로 로그인</p>
+    <p style="margin-top:6px;font-size:11.5px;color:var(--faint);cursor:pointer;text-decoration:underline;"
        onclick="skipLogin()">이 기기에서만 쓰기 (동기화 없이)</p>
   </div>
 </div>
@@ -394,6 +392,7 @@
 <div class="tools">
   <button onclick="exportData()">Export</button>
   <button onclick="document.getElementById('importfile').click()">Import</button>
+  <button onclick="setPassword()">Set password</button>
   <input type="file" id="importfile" accept=".json" style="display:none" onchange="importData(event)">
 </div>
 
@@ -499,27 +498,34 @@ function handleSession(session) {
     setSyncChip('–');
   }
 }
+async function pwSignIn() {
+  const email = document.getElementById('loginemail').value.trim();
+  const password = document.getElementById('loginpw').value;
+  const msg = document.getElementById('loginmsg');
+  if (!email || !password) return;
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  if (error) msg.textContent = '이메일/비밀번호 불일치 — 처음이면 아래 "이메일 링크"로 로그인 후 Set password';
+  // 성공 시 onAuthStateChange가 자동으로 화면을 열어줌
+}
 async function sendLink() {
   const email = document.getElementById('loginemail').value.trim();
   const msg = document.getElementById('loginmsg');
-  if (!email) return;
+  if (!email) { msg.textContent = '이메일을 먼저 입력하세요'; return; }
   const { error } = await sb.auth.signInWithOtp({
     email,
     options: { emailRedirectTo: location.origin + location.pathname }
   });
-  if (error) { msg.textContent = '전송 실패: ' + error.message; return; }
-  msg.textContent = '메일함 확인! 아이폰은 6자리 코드 입력, PC는 링크 클릭도 OK';
-  document.getElementById('coderow').style.display = 'block';
-  document.getElementById('logincode').focus();
+  msg.textContent = error ? '전송 실패: ' + error.message
+                          : '메일함 확인! 링크를 누르면 로그인됩니다';
 }
-async function verifyCode() {
-  const email = document.getElementById('loginemail').value.trim();
-  const token = document.getElementById('logincode').value.trim();
-  const msg = document.getElementById('loginmsg');
-  if (!email || !token) return;
-  const { error } = await sb.auth.verifyOtp({ email, token, type: 'email' });
-  if (error) { msg.textContent = '코드가 맞지 않습니다 — 최신 메일의 코드인지 확인'; document.getElementById('logincode').value = ''; }
-  // 성공 시 onAuthStateChange가 자동으로 화면을 열어줌
+async function setPassword() {
+  if (!sbUser) { alert('먼저 로그인하세요.'); return; }
+  const p1 = prompt('새 비밀번호 (8자 이상, 👻 답과 다르게!):');
+  if (!p1 || p1.length < 8) { alert('8자 이상이어야 합니다.'); return; }
+  const p2 = prompt('한 번 더:');
+  if (p1 !== p2) { alert('서로 다릅니다 — 다시 시도하세요.'); return; }
+  const { error } = await sb.auth.updateUser({ password: p1 });
+  alert(error ? '실패: ' + error.message : '비밀번호 설정 완료! 이제 어느 기기서든 이메일+비밀번호로 로그인됩니다.');
 }
 function skipLogin() {
   localStorage.setItem('eosOffline', '1');
