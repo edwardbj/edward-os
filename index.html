@@ -13,8 +13,8 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <!--
   ============================================
-  Edward OS v1.0 — "제대로 나만 쓰는 앱"의 시작
-  Changes from v0.6:
+  Edward OS v1.1
+  v1.0: Supabase 로그인 + 기기 간 동기화 / v1.1: 💡 Suggested for Today
   - Supabase 백엔드 연결: 이메일 매직링크 로그인
   - 기기 간 자동 동기화 (app_state 테이블, RLS 보호)
   - 오프라인일 땐 localStorage에 저장, 온라인 되면 push
@@ -110,6 +110,18 @@
   }
   .strip .nums { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--muted); }
   .strip .nums b { color: var(--text); font-weight: 650; }
+
+  /* ---------- suggestions (from Claude's briefing) ---------- */
+  .sug { background: #fffbeb; border: 1px solid #fde68a; border-radius: 16px; margin-bottom: 18px; overflow: hidden; }
+  .sug .shead { display: flex; justify-content: space-between; align-items: center; padding: 11px 14px 8px; }
+  .sug .shead b { font-size: 12.5px; letter-spacing: .8px; color: #92400e; }
+  .sug .paste { border: none; background: none; font-size: 12px; color: #b45309; cursor: pointer; text-decoration: underline; }
+  .sugitem { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-top: 1px solid #fde68a; }
+  .sugitem .body { flex: 1; min-width: 0; }
+  .sugitem .title { font-size: 14.5px; }
+  .sugitem .why { font-size: 12px; color: #a16207; margin-top: 2px; }
+  .sugbtn { border: 1px solid #fde68a; background: #fff; border-radius: 8px; padding: 6px 10px; font-size: 12.5px; font-weight: 700; cursor: pointer; color: #16a34a; flex-shrink: 0; }
+  .sugbtn.no { color: #d4d4d8; }
 
   /* ---------- section heads ---------- */
   .listhead { display: flex; justify-content: space-between; align-items: center; margin: 6px 4px 10px; }
@@ -303,6 +315,15 @@
     <span><b id="nxp">0</b> 💋 today</span>
     <span id="xpnext">💕 100 to Lv 2</span>
   </div>
+</div>
+
+<!-- Claude's daily suggestions: accept, edit, or ignore — Edward decides -->
+<div class="sug" id="sugbox">
+  <div class="shead">
+    <b>💡 SUGGESTED FOR TODAY</b>
+    <button class="paste" onclick="pasteSuggestions()">📥 paste</button>
+  </div>
+  <div id="suglist"></div>
 </div>
 
 <!-- Deadlines: anything with a due date, visible or not on the calendar -->
@@ -530,8 +551,39 @@ function load() {
   } catch(e) { return fresh(); }
 }
 function fresh() {
-  return { tasks: [], deadlines: [], one: '', oneDone: false, oneDate: '', xp: 0,
+  return { tasks: [], deadlines: [], suggestions: [], one: '', oneDone: false, oneDate: '', xp: 0,
            streak: 0, lastDoneDate: '', todayXP: 0, todayMin: 0, todayDate: '' };
+}
+
+/* ============ Claude suggestions ============ */
+function pasteSuggestions() {
+  const raw = prompt('아침 브리핑의 제안 코드(JSON)를 붙여넣으세요:');
+  if (!raw) return;
+  try {
+    const arr = JSON.parse(raw.trim());
+    if (!Array.isArray(arr)) throw 0;
+    state.suggestions = arr.map((x, i) => ({
+      id: Date.now() + i,
+      title: String(x.title || ''),
+      domain: ['D1','D2','D3','P'].includes(x.domain) ? x.domain : 'D3',
+      est: [10,25,45].includes(x.est) ? x.est : 25,
+      u: (x.u >= 1 && x.u <= 5) ? x.u : 3,
+      why: String(x.why || ''),
+      date: todayStr()
+    })).filter(x => x.title);
+    save(); render();
+  } catch(e) { alert('형식이 안 맞아요 — 브리핑의 코드 블록 전체를 복사했는지 확인해주세요.'); }
+}
+function acceptSug(id) {
+  const s = state.suggestions.find(x => x.id === id);
+  if (!s) return;
+  state.tasks.push({ id: Date.now(), title: s.title, domain: s.domain, est: s.est, u: s.u, done: false });
+  state.suggestions = state.suggestions.filter(x => x.id !== id);
+  save(); render();
+}
+function dismissSug(id) {
+  state.suggestions = state.suggestions.filter(x => x.id !== id);
+  save(); render();
 }
 function save() { localStorage.setItem(KEY, JSON.stringify(state)); schedulePush(); }
 function todayStr() { return new Date().toISOString().slice(0,10); }
@@ -541,6 +593,7 @@ function rollover() {
   if (state.todayDate !== t) {
     state.todayDate = t; state.todayXP = 0; state.todayMin = 0;
     state.tasks = state.tasks.filter(x => !x.done);
+    state.suggestions = (state.suggestions || []).filter(s => s.date === t);  // suggestions expire daily
     if (state.oneDate !== t) { state.one = ''; state.oneDone = false; state.oneDate = t; }
     const yest = new Date(Date.now() - 864e5).toISOString().slice(0,10);
     if (state.lastDoneDate !== yest && state.lastDoneDate !== t) state.streak = 0;
@@ -832,6 +885,22 @@ function render() {
         <button class="del" onclick="delDeadline(${d.id})">✕</button>
       </div>`;
     }).join('');
+  }
+
+  /* suggestions box */
+  const sug = document.getElementById('suglist');
+  if (!state.suggestions || !state.suggestions.length) {
+    sug.innerHTML = '<div class="sugitem" style="color:#a16207;font-size:12.5px;">아침 브리핑의 제안 코드를 📥 paste로 붙여넣으면 여기에 떠요</div>';
+  } else {
+    sug.innerHTML = state.suggestions.map(s => `
+      <div class="sugitem">
+        <div class="body">
+          <div class="title">${escapeHtml(s.title)}</div>
+          <div class="why">${DOMAIN_LABEL[s.domain]} · ${s.est}m · U${s.u}${s.why ? ' — ' + escapeHtml(s.why) : ''}</div>
+        </div>
+        <button class="sugbtn" onclick="acceptSug(${s.id})">＋ Add</button>
+        <button class="sugbtn no" onclick="dismissSug(${s.id})">✕</button>
+      </div>`).join('');
   }
 
   const list = document.getElementById('tasklist');
