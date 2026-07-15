@@ -10,14 +10,16 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Edward OS">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <!--
   ============================================
-  Edward OS v0.6
-  Changes from v0.5:
-  - NEW: Passcode lock screen. First run: set a passcode
-    (enter twice). After that: required on each new visit.
-    NOTE: casual-access barrier, not encryption.
-    Forgot passcode = clear browser data (keep Exports!).
+  Edward OS v1.0 — "제대로 나만 쓰는 앱"의 시작
+  Changes from v0.6:
+  - Supabase 백엔드 연결: 이메일 매직링크 로그인
+  - 기기 간 자동 동기화 (app_state 테이블, RLS 보호)
+  - 오프라인일 땐 localStorage에 저장, 온라인 되면 push
+  - 우측 상단 ☁️ = 동기화 상태 표시
+  사전 준비: Supabase SQL 세팅 + Site URL 설정 (가이드 참조)
   ============================================
 -->
 <style>
@@ -252,9 +254,23 @@
   </div>
 </div>
 
+<!-- login overlay (behind the 👻 lock): email magic-link -->
+<div class="lock" id="login" style="display:none; z-index:998;">
+  <div class="lockbox">
+    <div style="font-size:44px; margin-bottom:10px;">☁️</div>
+    <p id="loginmsg">이메일로 입장 링크를 보내드려요 — 클릭하면 이 기기가 연결됩니다</p>
+    <input type="email" id="loginemail" placeholder="you@email.com" style="letter-spacing:0;"
+           onkeydown="if(event.key==='Enter')sendLink()">
+    <button onclick="sendLink()">Send link</button>
+    <p style="margin-top:12px;font-size:11.5px;color:var(--faint);cursor:pointer;text-decoration:underline;"
+       onclick="skipLogin()">이 기기에서만 쓰기 (동기화 없이)</p>
+  </div>
+</div>
+
 <div class="top">
   <h1>Edward OS</h1>
   <div class="chips">
+    <span class="chip" id="syncchip" title="sync status">–</span>
     <span class="chip">Lv <b id="level">1</b></span>
     <span class="chip">🔥 <b id="streak">0</b></span>
   </div>
@@ -297,7 +313,10 @@
 <div class="list">
   <div class="addrow">
     <input type="text" id="newdl" placeholder="What must be done? (name & scope)" onkeydown="if(event.key==='Enter')addDeadline()">
-    <input type="date" id="newdldate">
+    <label style="font-size:11px;color:var(--faint);display:flex;flex-direction:column;gap:2px;">Start (optional)
+      <input type="date" id="newdlstart"></label>
+    <label style="font-size:11px;color:var(--faint);display:flex;flex-direction:column;gap:2px;">Due
+      <input type="date" id="newdldate"></label>
     <select id="newdlgenre">
       <option value="AX">Work · AX</option>
       <option value="CEO">Work · CEO</option>
@@ -410,10 +429,13 @@ async function unlock() {
 function openApp() {
   document.getElementById('lock').style.display = 'none';
   sessionStorage.setItem('eosUnlocked', '1');
+  // trust this device for 30 days — no re-asking on every visit
+  localStorage.setItem('eosTrustUntil', String(Date.now() + 30 * 864e5));
 }
 
 function initLock() {
-  if (sessionStorage.getItem('eosUnlocked') === '1') {
+  const trust = parseInt(localStorage.getItem('eosTrustUntil') || '0');
+  if (sessionStorage.getItem('eosUnlocked') === '1' || Date.now() < trust) {
     document.getElementById('lock').style.display = 'none';
     return;
   }
@@ -421,6 +443,78 @@ function initLock() {
     document.getElementById('lockmsg').textContent = '답 설정 (처음 한 번)';
   }
   setTimeout(() => document.getElementById('lockinput').focus(), 100);
+}
+
+/* ============ cloud sync (v1.0) ============ */
+const SB_URL = 'https://glgqcoehmqkkaseqmwgb.supabase.co';
+const SB_KEY = 'sb_publishable_nJTcOAp9DXywfd7LmsIX5g_dFaJ6AST';  // publishable key — safe in client code
+const sb = window.supabase ? window.supabase.createClient(SB_URL, SB_KEY) : null;
+let sbUser = null, pushTimer = null;
+
+function setSyncChip(t) {
+  const el = document.getElementById('syncchip');
+  if (el) el.textContent = t;
+}
+async function initAuth() {
+  if (!sb) { setSyncChip('–'); return; }
+  const { data: { session } } = await sb.auth.getSession();
+  handleSession(session);
+  sb.auth.onAuthStateChange((_e, s) => handleSession(s));
+}
+function handleSession(session) {
+  sbUser = session ? session.user : null;
+  const overlay = document.getElementById('login');
+  if (sbUser) {
+    overlay.style.display = 'none';
+    setSyncChip('☁️');
+    pullState();
+  } else if (localStorage.getItem('eosOffline') !== '1') {
+    overlay.style.display = 'flex';
+    setSyncChip('–');
+  }
+}
+async function sendLink() {
+  const email = document.getElementById('loginemail').value.trim();
+  const msg = document.getElementById('loginmsg');
+  if (!email) return;
+  const { error } = await sb.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: location.origin + location.pathname }
+  });
+  msg.textContent = error ? '전송 실패: ' + error.message
+                          : '메일함 확인! 링크를 누르면 이 기기가 연결됩니다 (스팸함도 확인)';
+}
+function skipLogin() {
+  localStorage.setItem('eosOffline', '1');
+  document.getElementById('login').style.display = 'none';
+}
+async function pullState() {
+  try {
+    const { data, error } = await sb.from('app_state').select('data').eq('user_id', sbUser.id).maybeSingle();
+    if (error) { setSyncChip('⚠️'); return; }
+    if (data && data.data) {
+      state = data.data;
+      state.tasks = state.tasks || []; state.deadlines = state.deadlines || [];
+      state.tasks.forEach(t => { if (!t.u) t.u = 3; });
+      localStorage.setItem(KEY, JSON.stringify(state));
+      render();
+    } else {
+      schedulePush();   // first device on this account: upload local data
+    }
+  } catch (e) { setSyncChip('⚠️'); }
+}
+function schedulePush() {
+  if (!sbUser) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(pushState, 1200);   // debounce: push 1.2s after last change
+}
+async function pushState() {
+  if (!sbUser) return;
+  try {
+    const { error } = await sb.from('app_state')
+      .upsert({ user_id: sbUser.id, data: state, updated_at: new Date().toISOString() });
+    setSyncChip(error ? '⚠️' : '☁️');
+  } catch (e) { setSyncChip('⚠️'); }
 }
 
 /* ============ data ============ */
@@ -439,7 +533,7 @@ function fresh() {
   return { tasks: [], deadlines: [], one: '', oneDone: false, oneDate: '', xp: 0,
            streak: 0, lastDoneDate: '', todayXP: 0, todayMin: 0, todayDate: '' };
 }
-function save() { localStorage.setItem(KEY, JSON.stringify(state)); }
+function save() { localStorage.setItem(KEY, JSON.stringify(state)); schedulePush(); }
 function todayStr() { return new Date().toISOString().slice(0,10); }
 
 function rollover() {
@@ -506,10 +600,13 @@ const GENRE_LABEL = { AX:'Work · AX', CEO:'Work · CEO', General:'Work · Gener
 function addDeadline() {
   const title = document.getElementById('newdl').value.trim();
   const due = document.getElementById('newdldate').value;
+  const start = document.getElementById('newdlstart').value || null;
   if (!title) return;
   if (!due) { alert('Pick a due date.'); return; }
-  state.deadlines.push({ id: Date.now(), title, due, genre: document.getElementById('newdlgenre').value });
+  if (start && start > due) { alert('Start date is after the due date.'); return; }
+  state.deadlines.push({ id: Date.now(), title, due, start, genre: document.getElementById('newdlgenre').value });
   document.getElementById('newdl').value = '';
+  document.getElementById('newdlstart').value = '';
   save(); render();
 }
 function doneDeadline(id) {
@@ -728,7 +825,7 @@ function render() {
         <input type="checkbox" onchange="doneDeadline(${d.id})" title="mark as shipped">
         <div class="body">
           <div class="title">${escapeHtml(d.title)}</div>
-          <div class="meta">${GENRE_LABEL[d.genre] || d.genre} · due ${d.due}${i === 0 ? ' · <span class="next">← start with this</span>' : ''}</div>
+          <div class="meta">${GENRE_LABEL[d.genre] || d.genre} · ${d.start ? d.start.slice(5).replace('-','/') + ' →' : 'due'} ${d.due.slice(5).replace('-','/')}${d.start && d.start > todayStr() ? ' · <span style="color:var(--faint)">starts later</span>' : ''}${i === 0 ? ' · <span class="next">← start with this</span>' : ''}</div>
         </div>
         <span class="dbadge ${cls}">${badge}</span>
         <button class="push" onclick="pushToToday(${d.id})" title="add a 25m session to Today">↳ Today</button>
@@ -768,6 +865,7 @@ document.getElementById('oneinput').addEventListener('input', e => {
 initLock();
 render();
 loadWeather();
+initAuth();
 setInterval(renderClock, 1000);   // live seconds
 </script>
 </body>
