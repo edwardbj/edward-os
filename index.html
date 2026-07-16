@@ -13,6 +13,15 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <!--
   ============================================
+  Edward OS v1.7
+  Changes from v1.6:
+  - Habits(🌱) 섹션 추가 — Today 리스트처럼 매일 리셋되지 않는 상시 루틴 전용
+    · 매일형(독서·홈트·일본어·수학·재무회계 공부): 체크 시 연속일수(🔥streak) 표시
+    · 주간형(골프 연습 주 3회): 이번 주 몇 회 했는지 표시, 요일 상관없이 자유
+  - 새 루틴 추가/삭제 가능, 완료 시 소액 XP 지급
+  ============================================
+--><!--
+  ============================================
   Edward OS v1.6
   Changes from v1.5:
   - 공휴일 목록 수정: 2026년부터 제헌절(7/17)이 18년 만에 법정 공휴일로 재지정됨에 따라 반영
@@ -343,6 +352,20 @@
   .task .del { border: none; background: none; color: #d4d4d8; font-size: 15px; cursor: pointer; padding: 4px; }
   .empty { color: var(--faint); font-size: 13.5px; text-align: center; padding: 22px 0; }
 
+  /* ---------- habit rows ---------- */
+  .habit { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .habit:last-child { border-bottom: none; }
+  .habit input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accent); flex-shrink: 0; }
+  .habit .body { flex: 1; min-width: 0; }
+  .habit .title { font-size: 15px; line-height: 1.35; }
+  .habit.done .title { color: var(--muted); }
+  .habit .meta { font-size: 11.5px; color: var(--faint); margin-top: 2px; }
+  .hstreak {
+    font-size: 11.5px; font-weight: 800; border-radius: 99px; padding: 4px 10px;
+    background: var(--accent-soft); color: var(--accent); flex-shrink: 0; white-space: nowrap;
+  }
+  .habit .del { border: none; background: none; color: #d4d4d8; font-size: 15px; cursor: pointer; padding: 4px; flex-shrink: 0; }
+
   /* ---------- note rows ---------- */
   .note { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
   .note:last-child { border-bottom: none; }
@@ -589,6 +612,27 @@
 
 <div class="section">
   <div class="listhead">
+    <h2>🌱 Habits</h2>
+    <span class="hint">상시 루틴 · 작은 성공부터</span>
+  </div>
+  <div class="list">
+    <div class="addrow">
+      <input type="text" id="newhabit" placeholder="새 루틴 추가…" onkeydown="if(event.key==='Enter')addHabit()">
+      <select id="newhabitfreq">
+        <option value="daily">매일</option>
+        <option value="weekly:2">주 2회</option>
+        <option value="weekly:3">주 3회</option>
+        <option value="weekly:4">주 4회</option>
+        <option value="weekly:5">주 5회</option>
+      </select>
+      <button onclick="addHabit()">Add</button>
+    </div>
+    <div id="habitlist"></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="listhead">
     <h2>📝 Notes</h2>
     <span class="hint">quick capture · kept forever, never auto-cleared</span>
   </div>
@@ -771,6 +815,7 @@ async function pullState() {
     if (data && data.data) {
       state = data.data;
       state.tasks = state.tasks || []; state.deadlines = state.deadlines || []; state.history = state.history || {}; state.notes = state.notes || [];
+      state.habits = state.habits || null; ensureHabits();
       state.tasks.forEach(t => { if (!t.u) t.u = 3; });
       localStorage.setItem(KEY, JSON.stringify(state));
       render();
@@ -801,13 +846,26 @@ function load() {
   try {
     const s = JSON.parse(localStorage.getItem(KEY)) || fresh();
     s.tasks = s.tasks || []; s.deadlines = s.deadlines || []; s.history = s.history || {}; s.notes = s.notes || [];
+    s.habits = s.habits || null;
     s.tasks.forEach(t => { if (!t.u) t.u = 3; });
     return s;
   } catch(e) { return fresh(); }
 }
 function fresh() {
-  return { tasks: [], deadlines: [], suggestions: [], notes: [], one: '', oneDone: false, oneDate: '', xp: 0,
+  return { tasks: [], deadlines: [], suggestions: [], notes: [], habits: null, one: '', oneDone: false, oneDate: '', xp: 0,
            streak: 0, lastDoneDate: '', todayXP: 0, todayMin: 0, todayDate: '', history: {} };
+}
+/* seed Edward's starting routine list once — never re-seeds if he's already added/edited habits */
+function ensureHabits() {
+  if (state.habits && state.habits.length) return;
+  state.habits = [
+    { id: 9001, title: '골프 연습', freq: 'weekly', target: 3, log: {} },
+    { id: 9002, title: '독서 10분', freq: 'daily', log: {} },
+    { id: 9003, title: '홈트레이닝 10~20분', freq: 'daily', log: {} },
+    { id: 9004, title: '일본어 공부 10분', freq: 'daily', log: {} },
+    { id: 9005, title: '수학 공부 (50일 수학)', freq: 'daily', log: {} },
+    { id: 9006, title: '재무·회계 공부', freq: 'daily', log: {} },
+  ];
 }
 
 /* ============ Claude suggestions ============ */
@@ -1087,6 +1145,51 @@ function delNote(id) {
   save(); render();
 }
 
+/* ============ habits: 상시 루틴 (daily checkbox or weekly count target) ============ */
+function addHabit() {
+  const input = document.getElementById('newhabit');
+  const title = input.value.trim();
+  if (!title) return;
+  const freqVal = document.getElementById('newhabitfreq').value; // "daily" or "weekly:N"
+  let freq = 'daily', target = 1;
+  if (freqVal.startsWith('weekly:')) { freq = 'weekly'; target = parseInt(freqVal.split(':')[1], 10); }
+  state.habits = state.habits || [];
+  state.habits.push({ id: Date.now(), title, freq, target, log: {} });
+  input.value = '';
+  save(); render();
+}
+function delHabit(id) {
+  state.habits = (state.habits || []).filter(h => h.id !== id);
+  save(); render();
+}
+function toggleHabit(id) {
+  const h = (state.habits || []).find(x => x.id === id);
+  if (!h) return;
+  h.log = h.log || {};
+  const t = todayStr();
+  if (h.log[t]) delete h.log[t]; else { h.log[t] = true; gainXP(5); }
+  save(); render();
+}
+function isoWeekdayOf(dateStr) {   // 1(Mon)..7(Sun), based on the KST calendar date string
+  const wd = new Date(dateStr + 'T00:00:00Z').getUTCDay();   // 0(Sun)..6(Sat)
+  return wd === 0 ? 7 : wd;
+}
+function habitStreak(h) {   // consecutive days ending today (or yesterday, if today isn't done yet)
+  const log = h.log || {};
+  let i = log[todayStr()] ? 0 : -1;
+  if (i === -1 && !log[dateStrKST(-1)]) return 0;
+  let count = 0;
+  while (log[dateStrKST(i)]) { count++; i--; }
+  return count;
+}
+function habitWeekCount(h) {   // days done since this week's Monday (KST), inclusive of today
+  const log = h.log || {};
+  const sinceMonday = isoWeekdayOf(todayStr()) - 1;
+  let count = 0;
+  for (let back = 0; back <= sinceMonday; back++) { if (log[dateStrKST(-back)]) count++; }
+  return count;
+}
+
 /* ============ xp & streak ============ */
 function gainXP(n) { state.xp += n; state.todayXP += n; markActive(); }
 function markActive() {
@@ -1195,6 +1298,7 @@ function importData(ev) {
     try {
       state = JSON.parse(e.target.result);
       state.tasks = state.tasks || []; state.deadlines = state.deadlines || []; state.history = state.history || {}; state.notes = state.notes || [];
+      state.habits = state.habits || null; ensureHabits();
       state.tasks.forEach(t => { if (!t.u) t.u = 3; });
       save(); render(); alert('Restored.');
     } catch(err) { alert('Invalid file.'); }
@@ -1373,6 +1477,28 @@ function render() {
       </div>`).join('');
   }
 
+  const habits = document.getElementById('habitlist');
+  if (!state.habits || !state.habits.length) {
+    habits.innerHTML = '<div class="empty">No habits yet</div>';
+  } else {
+    habits.innerHTML = state.habits.map(h => {
+      const done = !!(h.log && h.log[todayStr()]);
+      const badge = h.freq === 'weekly'
+        ? `이번주 ${habitWeekCount(h)}/${h.target}`
+        : `🔥 ${habitStreak(h)}일`;
+      return `
+      <div class="habit ${done ? 'done' : ''}">
+        <input type="checkbox" ${done ? 'checked' : ''} onchange="toggleHabit(${h.id})">
+        <div class="body">
+          <div class="title">${escapeHtml(h.title)}</div>
+          <div class="meta">${h.freq === 'weekly' ? '주 ' + h.target + '회 목표' : '매일'}</div>
+        </div>
+        <span class="hstreak">${badge}</span>
+        <button class="del" onclick="delHabit(${h.id})">✕</button>
+      </div>`;
+    }).join('');
+  }
+
   const notes = document.getElementById('notelist');
   if (!state.notes || !state.notes.length) {
     notes.innerHTML = '<div class="empty">No notes yet</div>';
@@ -1398,6 +1524,7 @@ document.getElementById('oneinput').addEventListener('input', e => {
 
 initLock();
 applyMood();
+ensureHabits();
 render();
 loadWeather();
 initAuth();
