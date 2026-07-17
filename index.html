@@ -13,6 +13,14 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <!--
   ============================================
+  Edward OS v1.8
+  Changes from v1.7:
+  - Habits 히트맵(heatmap) 추가 — GitHub 컨트리뷰션 그래프처럼, 지난 13주간 하루에 몇 개 루틴을 완료했는지
+    색 진하기로 보여줌 (Habits 섹션 맨 아래)
+  - 완료 피드백 효과 추가 — 태스크·해비트·오늘의 포커스 체크 시 짧게 팝 애니메이션 + 배경 플래시
+  ============================================
+--><!--
+  ============================================
   Edward OS v1.7
   Changes from v1.6:
   - Habits(🌱) 섹션 추가 — Today 리스트처럼 매일 리셋되지 않는 상시 루틴 전용
@@ -366,6 +374,23 @@
   }
   .habit .del { border: none; background: none; color: #d4d4d8; font-size: 15px; cursor: pointer; padding: 4px; flex-shrink: 0; }
 
+  /* ---------- habit heatmap (last 13 weeks, combined intensity) ---------- */
+  .heatwrap { padding: 12px 14px 16px; border-top: 1px solid var(--line); }
+  .heatlabel { font-size: 11px; color: var(--faint); margin-bottom: 8px; font-weight: 700; letter-spacing: .3px; }
+  .heatgrid { display: flex; gap: 3px; overflow-x: auto; padding-bottom: 2px; }
+  .heatweek { display: flex; flex-direction: column; gap: 3px; }
+  .heatcell { width: 11px; height: 11px; border-radius: 2px; background: var(--line); flex-shrink: 0; }
+  .heatcell.hl1 { background: var(--accent); opacity: .35; }
+  .heatcell.hl2 { background: var(--accent); opacity: .6; }
+  .heatcell.hl3 { background: var(--accent); opacity: .85; }
+  .heatcell.hl4 { background: var(--accent); opacity: 1; }
+
+  /* ---------- completion feedback: brief pop + flash on check ---------- */
+  @keyframes popcheck { 0% { transform: scale(1); } 45% { transform: scale(1.3) rotate(-4deg); } 100% { transform: scale(1); } }
+  @keyframes flashdone { 0% { background: var(--accent-soft); } 100% { background: transparent; } }
+  .justdone { animation: flashdone .7s ease; }
+  .justdone input[type=checkbox] { animation: popcheck .4s ease; }
+
   /* ---------- note rows ---------- */
   .note { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
   .note:last-child { border-bottom: none; }
@@ -628,6 +653,10 @@
       <button onclick="addHabit()">Add</button>
     </div>
     <div id="habitlist"></div>
+    <div class="heatwrap">
+      <div class="heatlabel">지난 13주</div>
+      <div class="heatgrid" id="heatgrid"></div>
+    </div>
   </div>
 </div>
 
@@ -841,6 +870,11 @@ async function pushState() {
 /* ============ data ============ */
 const KEY = 'edwardOS';
 let state = load();
+let flashKey = null;   // transient "just completed" marker for the pop/flash animation — cleared right after one render
+function flash(key) {
+  flashKey = key;
+  setTimeout(() => { flashKey = null; render(); }, 700);
+}
 
 function load() {
   try {
@@ -1063,7 +1097,7 @@ function addDeadline() {
 function doneDeadline(id) {
   state.deadlines = state.deadlines.filter(x => x.id !== id);
   gainXP(20);   // shipping something with a deadline = +20 XP
-  save(); render();
+  save(); render();   // deadline row disappears immediately (list is filtered), so no flash target to animate
 }
 function delDeadline(id) {
   state.deadlines = state.deadlines.filter(x => x.id !== id);
@@ -1093,7 +1127,7 @@ function toggleOne() {
   if (!state.one.trim()) { document.getElementById('onecheck').checked = false; return; }
   state.oneDone = document.getElementById('onecheck').checked;
   state.oneDate = todayStr();
-  if (state.oneDone) gainXP(30);
+  if (state.oneDone) { gainXP(30); flash('focus'); }
   else { state.xp = Math.max(0, state.xp - 30); state.todayXP = Math.max(0, state.todayXP - 30); }
   save(); render();
 }
@@ -1116,7 +1150,7 @@ function addTask() {
 function toggleTask(id) {
   const t = state.tasks.find(x => x.id === id);
   t.done = !t.done;
-  if (t.done) { gainXP(t.est); }
+  if (t.done) { gainXP(t.est); flash('task-' + id); }
   else { state.xp = Math.max(0, state.xp - t.est); state.todayXP = Math.max(0, state.todayXP - t.est); }
   save(); render();
 }
@@ -1167,7 +1201,7 @@ function toggleHabit(id) {
   if (!h) return;
   h.log = h.log || {};
   const t = todayStr();
-  if (h.log[t]) delete h.log[t]; else { h.log[t] = true; gainXP(5); }
+  if (h.log[t]) delete h.log[t]; else { h.log[t] = true; gainXP(5); flash('habit-' + id); }
   save(); render();
 }
 function isoWeekdayOf(dateStr) {   // 1(Mon)..7(Sun), based on the KST calendar date string
@@ -1188,6 +1222,29 @@ function habitWeekCount(h) {   // days done since this week's Monday (KST), incl
   let count = 0;
   for (let back = 0; back <= sinceMonday; back++) { if (log[dateStrKST(-back)]) count++; }
   return count;
+}
+/* combined 13-week heatmap: each day's cell = how many habits were checked that day */
+function buildHeatmapWeeks() {
+  const iso = isoWeekdayOf(todayStr());     // 1(Mon)..7(Sun)
+  const endOffset = 7 - iso;                // days forward to this week's Sunday (grid always ends on a full week)
+  const startOffset = endOffset - 90;       // 91 days total = exactly 13 full Mon–Sun weeks
+  const cells = [];
+  for (let i = startOffset; i <= endOffset; i++) {
+    const d = dateStrKST(i);
+    let count = 0;
+    (state.habits || []).forEach(h => { if (h.log && h.log[d]) count++; });
+    cells.push({ date: d, count });
+  }
+  const weeks = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+  return weeks;
+}
+function heatLevel(count) {
+  if (count <= 0) return '';
+  if (count === 1) return 'hl1';
+  if (count <= 2) return 'hl2';
+  if (count <= 3) return 'hl3';
+  return 'hl4';
 }
 
 /* ============ xp & streak ============ */
@@ -1409,6 +1466,7 @@ function render() {
   document.getElementById('oneinput').value = state.one;
   document.getElementById('onecheck').checked = state.oneDone;
   document.getElementById('focuscard').classList.toggle('done', state.oneDone);
+  document.getElementById('focuscard').classList.toggle('justdone', flashKey === 'focus');
 
   const total = state.tasks.length + (state.one.trim() ? 1 : 0);
   const done = state.tasks.filter(t => t.done).length + (state.oneDone ? 1 : 0);
@@ -1465,7 +1523,7 @@ function render() {
     const sorted = [...state.tasks].sort((a,b) =>
       a.done - b.done || b.u - a.u || a.domain.localeCompare(b.domain));
     list.innerHTML = sorted.map(t => `
-      <div class="task ${t.done ? 'done' : ''}">
+      <div class="task ${t.done ? 'done' : ''} ${flashKey === 'task-' + t.id ? 'justdone' : ''}">
         <input type="checkbox" ${t.done ? 'checked' : ''} onchange="toggleTask(${t.id})">
         <div class="body">
           <div class="title">${escapeHtml(t.title)}</div>
@@ -1487,7 +1545,7 @@ function render() {
         ? `이번주 ${habitWeekCount(h)}/${h.target}`
         : `🔥 ${habitStreak(h)}일`;
       return `
-      <div class="habit ${done ? 'done' : ''}">
+      <div class="habit ${done ? 'done' : ''} ${flashKey === 'habit-' + h.id ? 'justdone' : ''}">
         <input type="checkbox" ${done ? 'checked' : ''} onchange="toggleHabit(${h.id})">
         <div class="body">
           <div class="title">${escapeHtml(h.title)}</div>
@@ -1497,6 +1555,14 @@ function render() {
         <button class="del" onclick="delHabit(${h.id})">✕</button>
       </div>`;
     }).join('');
+  }
+
+  const heatgrid = document.getElementById('heatgrid');
+  if (heatgrid) {
+    heatgrid.innerHTML = buildHeatmapWeeks().map(week => `
+      <div class="heatweek">${week.map(c =>
+        `<div class="heatcell ${heatLevel(c.count)}" title="${c.date}: ${c.count}개 완료"></div>`
+      ).join('')}</div>`).join('');
   }
 
   const notes = document.getElementById('notelist');
