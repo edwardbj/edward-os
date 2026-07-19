@@ -13,6 +13,16 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <!--
   ============================================
+  Edward OS v2.1
+  Changes from v2.0 — Focus는 할 일이 아니라 의도(intention):
+  - Edward 피드백: "Today's Focus를 체크박스로 '완료' 표시하는 게 맞나? 좀 더 conceptual한 거 아냐?"
+    → 맞는 지적이라 Done 체크박스를 아예 없앰. Focus는 오늘 하루를 지탱하는 한 가지 방향/의도이지,
+    완료 여부로 채점하는 할 일 목록 항목이 아님. 완료가 목적이 아니라는 Suzuki의 메시지와도 일치 —
+    보상은 오직 "시작"(Start)에만 붙고, 끝냈는지는 더 이상 체크하지 않음
+  - Today's Progress 진행률 바에서도 Focus를 제외 — 그건 이제 일반 Today 할 일들만의 완료율
+  ============================================
+--><!--
+  ============================================
   Edward OS v2.0
   Changes from v1.9 — "Start, don't just finish" (Dr. Wendy Suzuki 영상 기반):
   - Wendy Suzuki 박사의 조언 반영: 마감 직전 압박은 아드레날린으로 일시적 집중력을 주지만
@@ -246,13 +256,11 @@
   }
   .focus .label { font-size: 11px; font-weight: 700; letter-spacing: 1.2px; color: var(--accent); }
   .focus .row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
-  .focus input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accent); flex-shrink: 0; }
   .focus input[type=text] {
     flex: 1; border: none; outline: none; font-size: 17px; font-weight: 650;
     background: transparent; color: var(--text); padding: 2px 0;
   }
   .focus input[type=text]::placeholder { color: var(--faint); font-weight: 400; }
-  .focus.done input[type=text] { text-decoration: line-through; color: var(--muted); }
   .focusactions { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
   .startbtn {
     border: none; border-radius: 10px; padding: 8px 16px; font-size: 13px; font-weight: 800; cursor: pointer;
@@ -577,7 +585,6 @@
 <div class="focus" id="focuscard">
   <div class="label">TODAY'S FOCUS</div>
   <div class="row">
-    <input type="checkbox" id="onecheck" onchange="toggleOne()">
     <input type="text" id="oneinput" placeholder="Set today's focus">
   </div>
   <div class="focusactions">
@@ -1178,17 +1185,6 @@ function startOne() {
   flash('focusstart');
   save(); render();
 }
-function toggleOne() {
-  if (!state.one.trim()) { document.getElementById('onecheck').checked = false; return; }
-  state.oneDone = document.getElementById('onecheck').checked;
-  state.oneDate = todayStr();
-  if (state.oneDone) {
-    if (!state.oneStarted) markFocusStarted(false);   // completing implies it was started — keep the streak honest, no double XP
-    gainXP(30); flash('focus');
-  }
-  else { state.xp = Math.max(0, state.xp - 30); state.todayXP = Math.max(0, state.todayXP - 30); }
-  save(); render();
-}
 
 /* ============ tasks ============ */
 function addTask() {
@@ -1397,17 +1393,20 @@ function importData(ev) {
 }
 
 /* ============ history: past days, reset daily but never deleted ============ */
+/* Focus is an intention, not a checklist item — it no longer counts toward done/total.
+   focusStarted still checks the old .oneDone field as a fallback so pre-v2.1 history days
+   (recorded before Start/Done were split) still show up correctly in the weekly stat. */
 function dayStats(dateStr, isToday) {
   if (isToday) {
-    const total = state.tasks.length + (state.one.trim() ? 1 : 0);
-    const done = state.tasks.filter(t => t.done).length + (state.oneDone ? 1 : 0);
+    const total = state.tasks.length;
+    const done = state.tasks.filter(t => t.done).length;
     return { date: dateStr, done, total, min: state.todayMin, xp: state.todayXP,
              focusStarted: !!(state.one.trim() && state.oneStarted) };
   }
   const h = (state.history || {})[dateStr];
   if (!h) return { date: dateStr, done: 0, total: 0, min: 0, xp: 0, focusStarted: false };
-  const total = (h.tasks || []).length + (h.one && h.one.trim() ? 1 : 0);
-  const done = (h.tasks || []).filter(t => t.done).length + (h.oneDone ? 1 : 0);
+  const total = (h.tasks || []).length;
+  const done = (h.tasks || []).filter(t => t.done).length;
   return { date: dateStr, done, total, min: h.min || 0, xp: h.xp || 0,
            focusStarted: !!(h.one && h.one.trim() && (h.oneStarted || h.oneDone)) };
 }
@@ -1462,8 +1461,8 @@ function openHistory() {
   } else {
     list.innerHTML = dates.map(d => {
       const h = state.history[d];
-      const total = (h.tasks || []).length + (h.one && h.one.trim() ? 1 : 0);
-      const done = (h.tasks || []).filter(t => t.done).length + (h.oneDone ? 1 : 0);
+      const total = (h.tasks || []).length;
+      const done = (h.tasks || []).filter(t => t.done).length;
       return `<div class="hrow" onclick="viewHistoryDay('${d}')">
         <span class="hdate">${d}</span>
         <span class="hstat">${done}/${total} done · ${h.min || 0}m · ${h.xp || 0} 💋</span>
@@ -1485,7 +1484,7 @@ function viewHistoryDay(d) {
       <span style="font-size:12px;color:var(--faint);flex-shrink:0;">${t.done ? '✓ done' : '— not done'}</span>
     </div>`).join('') || '<div class="empty">No tasks logged that day</div>';
   document.getElementById('historydetail').innerHTML = `
-    <div class="listhead"><h2 style="font-size:14.5px;">${d}${h.one ? ' · 🎯 ' + escapeHtml(h.one) + (h.oneDone ? ' ✓' : '') : ''}</h2></div>
+    <div class="listhead"><h2 style="font-size:14.5px;">${d}${h.one ? ' · 🎯 ' + escapeHtml(h.one) + ((h.oneStarted || h.oneDone) ? ' · 시작함' : '') : ''}</h2></div>
     <div class="list">${rows}</div>`;
 }
 
@@ -1503,21 +1502,18 @@ function render() {
   document.getElementById('focusstreak').textContent = state.focusStreak || 0;
   document.getElementById('xpnext').textContent = '💕 ' + (100 - state.xp % 100) + ' to Lv ' + (level + 1);
 
+  /* Focus is an intention, not a task — no done/checked state, just the text and whether
+     Edward has started acting on it today. */
   document.getElementById('oneinput').value = state.one;
-  document.getElementById('onecheck').checked = state.oneDone;
-  document.getElementById('focuscard').classList.toggle('done', state.oneDone);
-  document.getElementById('focuscard').classList.toggle('justdone', flashKey === 'focus' || flashKey === 'focusstart');
+  document.getElementById('focuscard').classList.toggle('justdone', flashKey === 'focusstart');
 
   /* Start button: its whole job is to get Edward moving on the hard thing early —
-     once he has (or the task's simply done), it steps aside for a small badge instead */
+     once he has, it steps aside for a small badge instead. There's no further "done" state. */
   const startbtn = document.getElementById('startbtn');
   const startedbadge = document.getElementById('startedbadge');
   const hasFocus = !!state.one.trim();
   if (!hasFocus) {
     startbtn.style.display = 'none'; startedbadge.style.display = 'none';
-  } else if (state.oneDone) {
-    startbtn.style.display = 'none';
-    startedbadge.style.display = 'inline'; startedbadge.textContent = '✅ 완료';
   } else if (state.oneStarted) {
     startbtn.style.display = 'none';
     startedbadge.style.display = 'inline'; startedbadge.textContent = '🧠 시작함 — 계속해봐요';
@@ -1528,11 +1524,11 @@ function render() {
   /* gentle nudge: only when Edward has a focus set, hasn't started it, but has already
      checked off something else today — never blocking, never guilt-heavy, just a nudge */
   const nudge = document.getElementById('focusnudge');
-  const nudgeOn = hasFocus && !state.oneStarted && !state.oneDone && state.tasks.some(t => t.done);
+  const nudgeOn = hasFocus && !state.oneStarted && state.tasks.some(t => t.done);
   nudge.classList.toggle('show', nudgeOn);
 
-  const total = state.tasks.length + (state.one.trim() ? 1 : 0);
-  const done = state.tasks.filter(t => t.done).length + (state.oneDone ? 1 : 0);
+  const total = state.tasks.length;
+  const done = state.tasks.filter(t => t.done).length;
   document.getElementById('ndone').textContent = done;
   document.getElementById('ntotal').textContent = total;
   document.getElementById('nmin').textContent = state.todayMin;
