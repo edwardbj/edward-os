@@ -13,6 +13,20 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <!--
   ============================================
+  Edward OS v2.0
+  Changes from v1.9 — "Start, don't just finish" (Dr. Wendy Suzuki 영상 기반):
+  - Wendy Suzuki 박사의 조언 반영: 마감 직전 압박은 아드레날린으로 일시적 집중력을 주지만
+    뇌가 "긴박함=생산성"을 학습하게 만들고, 전전두피질은 사실 평온한 상태에서 더 잘 작동함.
+    해법은 "제일 하기 싫은 일을 예정보다 일찍 시작"하고 그 불편함을 견디는 훈련.
+  - TODAY'S FOCUS에 Done과 별개로 ▶ Start 버튼 추가 — 완료가 아니라 "시작" 자체에 즉시 보상
+    (+10 XP, 짧은 격려 메시지). 도파민 트리거를 완료 시점이 아니라 착수 시점으로 앞당김
+  - 🎯 Focus streak 추가 (기존 🔥 활동 스트릭과 별개) — Focus를 매일 "시작"한 연속일수를 추적
+  - 부드러운 넛지: 오늘의 Focus를 아직 시작 안 했는데 다른 할 일을 먼저 끝냈을 때,
+    죄책감 유발이 아닌 담백한 한 줄 안내("3분만 먼저 열어볼까요?")를 Focus 카드 아래 표시
+  - History 주간/월간 요약에 "🎯 Focus 시작 N/7일" 통계 추가
+  ============================================
+--><!--
+  ============================================
   Edward OS v1.9
   Changes from v1.8:
   - 날씨가 페이지 로드 시 한 번만 불러와지고 그 뒤로 안 바뀌던 버그 수정 — 15분마다 자동 갱신
@@ -239,6 +253,20 @@
   }
   .focus input[type=text]::placeholder { color: var(--faint); font-weight: 400; }
   .focus.done input[type=text] { text-decoration: line-through; color: var(--muted); }
+  .focusactions { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+  .startbtn {
+    border: none; border-radius: 10px; padding: 8px 16px; font-size: 13px; font-weight: 800; cursor: pointer;
+    background: linear-gradient(135deg, #a78bfa, #7c3aed 60%, #6d28d9); color: #fff;
+    box-shadow: 0 3px 10px rgba(124,58,237,.35);
+  }
+  .startbtn:active { transform: scale(.97); }
+  .startedbadge { font-size: 12.5px; font-weight: 700; color: #7c3aed; }
+  .focusnudge {
+    display: none; margin-top: 12px; font-size: 12.5px; line-height: 1.55;
+    color: var(--sug-why); background: var(--sug-bg); border: 1px solid var(--sug-border);
+    border-radius: 10px; padding: 10px 12px;
+  }
+  .focusnudge.show { display: block; }
 
   /* ---------- status strip ---------- */
   .strip {
@@ -529,6 +557,7 @@
     <span class="chip" id="syncchip" title="sync status">–</span>
     <span class="chip">Lv <b id="level">1</b></span>
     <span class="chip">🔥 <b id="streak">0</b></span>
+    <span class="chip" title="Focus를 시작한 연속일수">🎯 <b id="focusstreak">0</b></span>
   </div>
 </div>
 
@@ -551,6 +580,11 @@
     <input type="checkbox" id="onecheck" onchange="toggleOne()">
     <input type="text" id="oneinput" placeholder="Set today's focus">
   </div>
+  <div class="focusactions">
+    <button class="startbtn" id="startbtn" onclick="startOne()">▶ Start</button>
+    <span class="startedbadge" id="startedbadge" style="display:none"></span>
+  </div>
+  <div class="focusnudge" id="focusnudge">3분만 먼저 열어볼까요? 시작하는 순간 뇌가 재훈련돼요 — Dr. Wendy Suzuki</div>
 </div>
 
 <div class="strip">
@@ -836,9 +870,7 @@ async function pullState() {
     if (error) { setSyncChip('⚠️'); return; }
     if (data && data.data) {
       state = data.data;
-      state.tasks = state.tasks || []; state.deadlines = state.deadlines || []; state.history = state.history || {}; state.notes = state.notes || [];
-      state.habits = state.habits || null; ensureHabits();
-      state.tasks.forEach(t => { if (!t.u) t.u = 3; });
+      normalizeState(state); ensureHabits();
       localStorage.setItem(KEY, JSON.stringify(state));
       render();
     } else {
@@ -872,15 +904,25 @@ function flash(key) {
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(KEY)) || fresh();
-    s.tasks = s.tasks || []; s.deadlines = s.deadlines || []; s.history = s.history || {}; s.notes = s.notes || [];
-    s.habits = s.habits || null;
-    s.tasks.forEach(t => { if (!t.u) t.u = 3; });
+    normalizeState(s);
     return s;
   } catch(e) { return fresh(); }
 }
 function fresh() {
   return { tasks: [], deadlines: [], suggestions: [], notes: [], habits: null, one: '', oneDone: false, oneDate: '', xp: 0,
-           streak: 0, lastDoneDate: '', todayXP: 0, todayMin: 0, todayDate: '', history: {} };
+           streak: 0, lastDoneDate: '', todayXP: 0, todayMin: 0, todayDate: '', history: {},
+           oneStarted: false, focusStreak: 0, lastFocusStartDate: '' };
+}
+/* fill in any fields missing from older saves/imports/pulls — keeps the app forward-compatible
+   as new features (like the v2.0 Focus-start tracking) get added without breaking old data */
+function normalizeState(s) {
+  s.tasks = s.tasks || []; s.deadlines = s.deadlines || []; s.history = s.history || {}; s.notes = s.notes || [];
+  s.habits = s.habits || null;
+  s.tasks.forEach(t => { if (!t.u) t.u = 3; });
+  s.oneStarted = s.oneStarted || false;
+  s.focusStreak = s.focusStreak || 0;
+  s.lastFocusStartDate = s.lastFocusStartDate || '';
+  return s;
 }
 /* seed Edward's starting routine list once — never re-seeds if he's already added/edited habits */
 function ensureHabits() {
@@ -944,6 +986,7 @@ function archiveDay(dateStr) {
     tasks: JSON.parse(JSON.stringify(state.tasks)),
     one: state.one,
     oneDone: state.oneDone,
+    oneStarted: state.oneStarted,
     xp: state.todayXP,
     min: state.todayMin
   };
@@ -959,7 +1002,7 @@ function rollover() {
     state.todayDate = t; state.todayXP = 0; state.todayMin = 0;
     state.tasks = state.tasks.filter(x => !x.done);
     state.suggestions = (state.suggestions || []).filter(s => s.date === t);  // suggestions expire daily
-    if (state.oneDate !== t) { state.one = ''; state.oneDone = false; state.oneDate = t; }
+    if (state.oneDate !== t) { state.one = ''; state.oneDone = false; state.oneStarted = false; state.oneDate = t; }
     const yest = dateStrKST(-1);
     if (state.lastDoneDate !== yest && state.lastDoneDate !== t) state.streak = 0;
     save();
@@ -1116,11 +1159,33 @@ function pushToToday(id) {
 }
 
 /* ============ focus ============ */
+/* v2.0 — Dr. Wendy Suzuki: the dopamine hit that matters is the one at START, not just at
+   finish. Deadline-driven last-minute pushes train the brain to depend on adrenaline/stress;
+   starting the hardest task early (and sitting with the discomfort) retrains it toward calm,
+   steady focus instead. So "Start" is now its own rewarded action, separate from "Done". */
+function markFocusStarted(reward) {
+  if (state.oneStarted) return;
+  state.oneStarted = true;
+  state.oneStartDate = todayStr();
+  const yest = dateStrKST(-1);
+  state.focusStreak = (state.lastFocusStartDate === yest) ? (state.focusStreak || 0) + 1 : 1;
+  state.lastFocusStartDate = todayStr();
+  if (reward) gainXP(10);
+}
+function startOne() {
+  if (!state.one.trim() || state.oneStarted) return;
+  markFocusStarted(true);
+  flash('focusstart');
+  save(); render();
+}
 function toggleOne() {
   if (!state.one.trim()) { document.getElementById('onecheck').checked = false; return; }
   state.oneDone = document.getElementById('onecheck').checked;
   state.oneDate = todayStr();
-  if (state.oneDone) { gainXP(30); flash('focus'); }
+  if (state.oneDone) {
+    if (!state.oneStarted) markFocusStarted(false);   // completing implies it was started — keep the streak honest, no double XP
+    gainXP(30); flash('focus');
+  }
   else { state.xp = Math.max(0, state.xp - 30); state.todayXP = Math.max(0, state.todayXP - 30); }
   save(); render();
 }
@@ -1324,9 +1389,7 @@ function importData(ev) {
   reader.onload = e => {
     try {
       state = JSON.parse(e.target.result);
-      state.tasks = state.tasks || []; state.deadlines = state.deadlines || []; state.history = state.history || {}; state.notes = state.notes || [];
-      state.habits = state.habits || null; ensureHabits();
-      state.tasks.forEach(t => { if (!t.u) t.u = 3; });
+      normalizeState(state); ensureHabits();
       save(); render(); alert('Restored.');
     } catch(err) { alert('Invalid file.'); }
   };
@@ -1338,13 +1401,15 @@ function dayStats(dateStr, isToday) {
   if (isToday) {
     const total = state.tasks.length + (state.one.trim() ? 1 : 0);
     const done = state.tasks.filter(t => t.done).length + (state.oneDone ? 1 : 0);
-    return { date: dateStr, done, total, min: state.todayMin, xp: state.todayXP };
+    return { date: dateStr, done, total, min: state.todayMin, xp: state.todayXP,
+             focusStarted: !!(state.one.trim() && state.oneStarted) };
   }
   const h = (state.history || {})[dateStr];
-  if (!h) return { date: dateStr, done: 0, total: 0, min: 0, xp: 0 };
+  if (!h) return { date: dateStr, done: 0, total: 0, min: 0, xp: 0, focusStarted: false };
   const total = (h.tasks || []).length + (h.one && h.one.trim() ? 1 : 0);
   const done = (h.tasks || []).filter(t => t.done).length + (h.oneDone ? 1 : 0);
-  return { date: dateStr, done, total, min: h.min || 0, xp: h.xp || 0 };
+  return { date: dateStr, done, total, min: h.min || 0, xp: h.xp || 0,
+           focusStarted: !!(h.one && h.one.trim() && (h.oneStarted || h.oneDone)) };
 }
 function rangeStats(n) {
   const out = [];
@@ -1364,6 +1429,7 @@ function renderHistorySummary() {
   const totalMin = days.reduce((s, d) => s + d.min, 0);
   const totalXP = days.reduce((s, d) => s + d.xp, 0);
   const activeDays = days.filter(d => d.total > 0).length;
+  const focusStartDays = days.filter(d => d.focusStarted).length;
   const bars = days.map(d => {
     const pct = d.total ? Math.round(d.done / d.total * 100) : 0;
     const h = d.total ? Math.max(8, pct) : 3;
@@ -1381,6 +1447,9 @@ function renderHistorySummary() {
       <span><b>${totalMin}</b>m focus</span>
       <span><b>${totalXP}</b> 💋</span>
       <span><b>${activeDays}</b>/${historyRange} active</span>
+    </div>
+    <div class="hsum-stats" style="margin-top:-4px;">
+      <span>🎯 Focus 시작 <b>${focusStartDays}</b>/${historyRange}일</span>
     </div>
     <div class="hsum-bars">${bars}</div>`;
 }
@@ -1431,12 +1500,36 @@ function render() {
   const level = Math.floor(state.xp / 100) + 1;
   document.getElementById('level').textContent = level;
   document.getElementById('streak').textContent = state.streak;
+  document.getElementById('focusstreak').textContent = state.focusStreak || 0;
   document.getElementById('xpnext').textContent = '💕 ' + (100 - state.xp % 100) + ' to Lv ' + (level + 1);
 
   document.getElementById('oneinput').value = state.one;
   document.getElementById('onecheck').checked = state.oneDone;
   document.getElementById('focuscard').classList.toggle('done', state.oneDone);
-  document.getElementById('focuscard').classList.toggle('justdone', flashKey === 'focus');
+  document.getElementById('focuscard').classList.toggle('justdone', flashKey === 'focus' || flashKey === 'focusstart');
+
+  /* Start button: its whole job is to get Edward moving on the hard thing early —
+     once he has (or the task's simply done), it steps aside for a small badge instead */
+  const startbtn = document.getElementById('startbtn');
+  const startedbadge = document.getElementById('startedbadge');
+  const hasFocus = !!state.one.trim();
+  if (!hasFocus) {
+    startbtn.style.display = 'none'; startedbadge.style.display = 'none';
+  } else if (state.oneDone) {
+    startbtn.style.display = 'none';
+    startedbadge.style.display = 'inline'; startedbadge.textContent = '✅ 완료';
+  } else if (state.oneStarted) {
+    startbtn.style.display = 'none';
+    startedbadge.style.display = 'inline'; startedbadge.textContent = '🧠 시작함 — 계속해봐요';
+  } else {
+    startbtn.style.display = 'inline-block'; startedbadge.style.display = 'none';
+  }
+
+  /* gentle nudge: only when Edward has a focus set, hasn't started it, but has already
+     checked off something else today — never blocking, never guilt-heavy, just a nudge */
+  const nudge = document.getElementById('focusnudge');
+  const nudgeOn = hasFocus && !state.oneStarted && !state.oneDone && state.tasks.some(t => t.done);
+  nudge.classList.toggle('show', nudgeOn);
 
   const total = state.tasks.length + (state.one.trim() ? 1 : 0);
   const done = state.tasks.filter(t => t.done).length + (state.oneDone ? 1 : 0);
