@@ -4,14 +4,26 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Edward OS</title>
-<!-- iPhone home screen: icon + fullscreen app mode -->
-<link rel="apple-touch-icon" href="icon.png">
-<link rel="icon" type="image/png" href="icon.png">
+<!-- iPhone home screen: icon + fullscreen app mode — inline SVG (🚀 for the "blast off" era), no
+     separate icon.png upload needed, stays a single-file deploy -->
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20180%20180%22%3E%0A%3Cdefs%3E%3ClinearGradient%20id%3D%22g%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%221%22%20y2%3D%221%22%3E%0A%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%2338bdf8%22%2F%3E%3Cstop%20offset%3D%2255%25%22%20stop-color%3D%22%230284c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%230369a1%22%2F%3E%0A%3C%2FlinearGradient%3E%3C%2Fdefs%3E%0A%3Crect%20width%3D%22180%22%20height%3D%22180%22%20rx%3D%2240%22%20fill%3D%22url(%23g)%22%2F%3E%0A%3Ctext%20x%3D%2250%25%22%20y%3D%2256%25%22%20font-size%3D%2298%22%20text-anchor%3D%22middle%22%20dominant-baseline%3D%22middle%22%3E%F0%9F%9A%80%3C%2Ftext%3E%0A%3C%2Fsvg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20180%20180%22%3E%0A%3Cdefs%3E%3ClinearGradient%20id%3D%22g%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%221%22%20y2%3D%221%22%3E%0A%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%2338bdf8%22%2F%3E%3Cstop%20offset%3D%2255%25%22%20stop-color%3D%22%230284c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%230369a1%22%2F%3E%0A%3C%2FlinearGradient%3E%3C%2Fdefs%3E%0A%3Crect%20width%3D%22180%22%20height%3D%22180%22%20rx%3D%2240%22%20fill%3D%22url(%23g)%22%2F%3E%0A%3Ctext%20x%3D%2250%25%22%20y%3D%2256%25%22%20font-size%3D%2298%22%20text-anchor%3D%22middle%22%20dominant-baseline%3D%22middle%22%3E%F0%9F%9A%80%3C%2Ftext%3E%0A%3C%2Fsvg%3E">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Edward OS">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <!--
+  ============================================
+  Edward OS v2.5
+  Changes from v2.4:
+  - 앱 아이콘을 "E" → 🚀 로 변경 (별도 icon.png 업로드 없이 인라인 SVG로, 단일 파일 배포 유지)
+  - 배경을 정적 그라데이션에서 서서히 움직이는 오로라 느낌으로 — background-size 확대 + 46초 주기
+    position 드리프트 애니메이션
+  - 날씨 연동 배경 사진 레이어 추가(선택) — Unsplash Source가 공식 종료되어 Pexels API로 구현.
+    무료 키를 한 번 넣으면(🖼️ Photo BG 버튼) 오늘 날씨/시간대에 맞는 사진이 은은하게 배경에 깔리고
+    천천히 줌/팬 되는 애니메이션까지 적용됨. 키가 없으면 에러 없이 그냥 그라데이션만 유지
+  ============================================
+--><!--
   ============================================
   Edward OS v2.4
   Changes from v2.3:
@@ -218,11 +230,34 @@
     transition: color .5s ease;
   }
   /* fixed full-viewport "sky" behind every card — the mood of the hour, always readable
-     underneath since every content block sits on an opaque var(--card) surface */
+     underneath since every content block sits on an opaque var(--card) surface.
+     background-size > 100% + a slow position drift makes the color/light feel alive
+     instead of a static flat gradient. */
   body::before {
-    content: ''; position: fixed; inset: 0; z-index: -1;
+    content: ''; position: fixed; inset: 0; z-index: -2;
     background: var(--scene);
+    background-size: 180% 180%;
+    animation: sceneDrift 46s ease-in-out infinite;
     transition: background 1.5s ease;
+  }
+  /* optional weather photo layer — sits above the gradient, tinted by it underneath (the
+     gradient shows through at the edges/behind translucent bits and doubles as an instant
+     placeholder before the photo loads). Empty/invisible until loadScenePhoto() sets it. */
+  body::after {
+    content: ''; position: fixed; inset: 0; z-index: -1;
+    background-image: var(--photo, none);
+    background-size: cover; background-position: center;
+    opacity: var(--photo-opacity, 0);
+    animation: photoDrift 60s ease-in-out infinite;
+    transition: opacity 1.4s ease;
+  }
+  @keyframes sceneDrift {
+    0%, 100% { background-position: 0% 0%; }
+    50%      { background-position: 100% 100%; }
+  }
+  @keyframes photoDrift {
+    0%, 100% { transform: scale(1.06) translate(0, 0); }
+    50%      { transform: scale(1.13) translate(-1.2%, -1%); }
   }
 
   /* ---------- top bar ---------- */
@@ -782,6 +817,7 @@
   <button onclick="exportData()">Export</button>
   <button onclick="document.getElementById('importfile').click()">Import</button>
   <button onclick="setPassword()">Set password</button>
+  <button onclick="setPexelsKey()" title="날씨에 맞는 배경 사진 켜기 (Pexels 무료 키 필요)">🖼️ Photo BG</button>
   <input type="file" id="importfile" accept=".json" style="display:none" onchange="importData(event)">
 </div>
 
@@ -1165,7 +1201,60 @@ async function loadWeather() {
     const j = await r.json();
     document.getElementById('temp').textContent = Math.round(j.current.temperature_2m) + '°C';
     document.getElementById('wicon').textContent = weatherEmoji(j.current.weather_code);
+    loadScenePhoto(j.current.weather_code);
   } catch(e) { /* offline — keep placeholders */ }
+}
+
+/* ============ scene photo: today's weather as the background, via Pexels (free, keyword search) ============
+   Unsplash's old keyword-hotlink service (Source) was shut down, so this uses the Pexels API
+   instead — same idea as the Supabase key: paste a free key once via "🖼️ Photo BG" and it's
+   remembered in this browser. Without a key, the app just keeps the animated gradient (no photo
+   layer, nothing broken, nothing nagging). */
+const PEXELS_KEY_STORE = 'edwardOSPexelsKey';
+function pexelsKey() { return localStorage.getItem(PEXELS_KEY_STORE) || ''; }
+function setPexelsKey() {
+  const cur = pexelsKey();
+  const k = prompt('Pexels API key (무료, api.pexels.com/api 에서 가입 즉시 발급):', cur);
+  if (k === null) return;
+  if (k.trim()) { localStorage.setItem(PEXELS_KEY_STORE, k.trim()); loadWeather(); }
+  else { localStorage.removeItem(PEXELS_KEY_STORE); clearScenePhoto(); }
+}
+function clearScenePhoto() {
+  document.documentElement.style.removeProperty('--photo');
+  document.documentElement.style.removeProperty('--photo-opacity');
+}
+/* weather code (Open-Meteo) + day/night → a search query that actually looks like the sky outside */
+function weatherPhotoQuery(code) {
+  const hourStr = new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul', hour: '2-digit', hour12: false });
+  const night = (parseInt(hourStr, 10) % 24) >= 20 || (parseInt(hourStr, 10) % 24) < 6;
+  if (code === 0)  return night ? 'clear starry night city skyline' : 'clear blue sky sunny';
+  if (code <= 2)   return night ? 'city night sky light clouds' : 'partly cloudy sky sunny';
+  if (code === 3)  return night ? 'overcast night city' : 'overcast cloudy sky skyline';
+  if (code <= 48)  return 'foggy misty city morning';
+  if (code <= 67)  return night ? 'rainy night city street lights' : 'rain window city street';
+  if (code <= 77)  return 'snow city street winter';
+  if (code <= 82)  return night ? 'rain shower night city' : 'rain shower clouds city';
+  return 'thunderstorm dark clouds city';
+}
+let lastPhotoQuery = null;
+async function loadScenePhoto(code) {
+  const key = pexelsKey();
+  if (!key) return;   // no key set — stay on the animated gradient, no error, no nagging
+  const q = weatherPhotoQuery(code);
+  if (q === lastPhotoQuery) return;   // same bucket as last check — don't re-fetch/flicker
+  try {
+    const r = await fetch(`https://api.pexels.com/v1/search?query=${encodeURIComponent(q)}&per_page=1&orientation=landscape`,
+      { headers: { Authorization: key } });
+    if (!r.ok) return;   // bad/expired key or rate limit — fail quietly, keep the gradient
+    const j = await r.json();
+    const photo = j.photos && j.photos[0];
+    if (!photo) return;
+    const url = (photo.src && (photo.src.large2x || photo.src.large || photo.src.original)) || null;
+    if (!url) return;
+    document.documentElement.style.setProperty('--photo', `url("${url}")`);
+    document.documentElement.style.setProperty('--photo-opacity', '0.5');
+    lastPhotoQuery = q;
+  } catch(e) { /* offline or blocked — keep whatever was showing */ }
 }
 
 /* ============ mood: the whole app's theme shifts with the hour of day (KST) ============ */
