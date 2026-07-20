@@ -13,6 +13,24 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <!--
   ============================================
+  Edward OS v2.4
+  Changes from v2.3:
+  - Cheer 말풍선 전면 교체: 한국어/진지한 아스피레이셔널 문구 다 빼고 영어 pop-culture 밈 톤으로 —
+    Edward 요청("I love my job" from The Devil Wears Prada, "werk, you're almost there" 등)
+  ============================================
+--><!--
+  ============================================
+  Edward OS v2.3
+  Changes from v2.2:
+  - "오늘의 제안"을 매번 채팅에서 코드 받아 붙여넣던 걸 원탭으로 — 링크 하나(.../?suggest=인코딩된JSON)를
+    열면 자동으로 오늘의 제안이 채워짐(복붙 불필요). 클라우드 동기화가 늦게 끝나도 유실되지 않도록
+    캡처 시점과 pullState() 완료 시점 두 군데서 재적용. 이 링크는 앞으로 매일 아침 스케줄된 작업이
+    캘린더/메일로 전달하는 방식과 짝지어 쓸 예정
+  - Cheer 말풍선 문구를 훨씬 가볍고 재밌게 — 딱딱한 "Keep going" 류 대신 피식 웃을만한 톤으로 교체,
+    2시간마다 갱신(하루에도 여러 번 바뀜)
+  ============================================
+--><!--
+  ============================================
   Edward OS v2.2
   Changes from v2.1 — 게임 캐릭터 말풍선처럼, 상태에 반응하는 응원 메시지:
   - Motivation of the Day(고정된 하루 한 줄)와는 별개로, Focus 시작 여부·Today 완료율에 따라
@@ -921,6 +939,7 @@ async function pullState() {
       normalizeState(state); ensureHabits();
       localStorage.setItem(KEY, JSON.stringify(state));
       render();
+      applyPendingURLSuggestions();   // re-apply on top — a slower cloud pull must not silently drop a ?suggest= link
     } else {
       schedulePush();   // first device on this account: upload local data
     }
@@ -986,23 +1005,42 @@ function ensureHabits() {
 }
 
 /* ============ Claude suggestions ============ */
+function applySuggestions(arr) {
+  if (!Array.isArray(arr)) throw 0;
+  state.suggestions = arr.map((x, i) => ({
+    id: Date.now() + i,
+    title: String(x.title || ''),
+    domain: ['D1','D2','D3','P'].includes(x.domain) ? x.domain : 'D3',
+    est: [10,25,45].includes(x.est) ? x.est : 25,
+    u: (x.u >= 1 && x.u <= 5) ? x.u : 3,
+    why: String(x.why || ''),
+    date: todayStr()
+  })).filter(x => x.title);
+}
 function pasteSuggestions() {
   const raw = prompt('아침 브리핑의 제안 코드(JSON)를 붙여넣으세요:');
   if (!raw) return;
   try {
-    const arr = JSON.parse(raw.trim());
-    if (!Array.isArray(arr)) throw 0;
-    state.suggestions = arr.map((x, i) => ({
-      id: Date.now() + i,
-      title: String(x.title || ''),
-      domain: ['D1','D2','D3','P'].includes(x.domain) ? x.domain : 'D3',
-      est: [10,25,45].includes(x.est) ? x.est : 25,
-      u: (x.u >= 1 && x.u <= 5) ? x.u : 3,
-      why: String(x.why || ''),
-      date: todayStr()
-    })).filter(x => x.title);
+    applySuggestions(JSON.parse(raw.trim()));
     save(); render();
   } catch(e) { alert('형식이 안 맞아요 — 브리핑의 코드 블록 전체를 복사했는지 확인해주세요.'); }
+}
+/* one-tap import: a link like .../?suggest=<encoded JSON> pre-loads today's suggestions with
+   no copy-paste at all — meant for a link dropped into a calendar event or email each morning.
+   Visiting the link is enough; the suggestions still show up as individual ＋Add/✕ cards,
+   nothing is auto-accepted, so Edward still decides item by item.
+   Captured synchronously at load (before cloud sync can race it) and re-applied again once
+   pullState() finishes, so a slower cloud pull can't silently overwrite it. */
+let pendingURLSuggestions = (function captureURLSuggestions() {
+  const raw = new URLSearchParams(location.search).get('suggest');
+  history.replaceState({}, '', location.pathname);   // scrub the URL either way — don't leave the payload in the address bar
+  if (!raw) return null;
+  try { return JSON.parse(decodeURIComponent(raw)); }
+  catch(e) { return null; }
+})();
+function applyPendingURLSuggestions() {
+  if (!pendingURLSuggestions) return;
+  try { applySuggestions(pendingURLSuggestions); save(); render(); } catch(e) { /* ignore malformed payload */ }
 }
 function acceptSug(id) {
   const s = state.suggestions.find(x => x.id === id);
@@ -1382,42 +1420,45 @@ function renderTimer() {
 }
 
 /* ============ cheer bubble: reacts to today's actual state, not a fixed daily quote ============ */
-/* Each bucket mixes two flavors on purpose: state-specific nudges (tied to what's actually
-   happening — focus started? tasks piling up?) and aspirational/gratitude one-liners Edward
-   asked for directly ("smile, you're doing this because you love it", "let's be grateful we
-   have a healthy working body"). Both matter — sometimes the moment calls for a nudge,
-   sometimes just for a breath. */
+/* English only, pop-culture-meme flavored, per Edward's request (his own examples: Emily's
+   "I love my job" from The Devil Wears Prada, "werk, you're almost there"). Not trying to be
+   inspirational — trying to make him smirk for half a second before he gets back to it. */
 const CHEER = {
   allDone:     { icon: '🎉', msgs: [
-    '오늘 몫, 다 끝냈어요 — 스스로에게 박수 한 번',
-    '완벽한 하루예요. 이제 푹 쉬어도 돼요',
-    "You showed up today. That's the whole game." ] },
+    'I love my job. I love my job. I love my job.',
+    'Task list: cleared. Ego: inflated.',
+    "New phone, who dis productive person?",
+    "That's the tea, and you drank it." ] },
   nudgeFocus:  { icon: '👀', msgs: [
-    '다른 일들 처리하는 동안, 제일 중요한 건 아직 그대로예요',
-    '잠깐, 오늘의 Focus부터 3분만 열어볼까요?',
-    'Smile — you get to choose what matters most today' ] },
+    'Bold of you to do everything except The Thing.',
+    'Plot twist: the hard task was the final boss all along.',
+    'Werk, bestie. The important thing first.',
+    'Side quests: cleared. Main quest: still standing there, judging you.' ] },
   justStarted: { icon: '🧠', msgs: [
-    '시작했다는 것 자체가 오늘의 승리예요',
-    '뇌가 지금 재훈련되는 중이에요 — 계속 가봐요',
-    "You're doing this because you love it. Keep going." ] },
+    'Started is the new finished.',
+    'Main character energy, unlocked.',
+    'You pressed start. That basically counts as a montage now.',
+    'Cue the training montage music.' ] },
   almostDone:  { icon: '🔥', msgs: [
-    '거의 다 왔어요, 마무리만 남았어요',
-    '오늘 목표에 근접했어요 — 조금만 더',
-    'So close. Finish strong.' ] },
+    "You're almost there, werk!",
+    "So close you can taste the credits rolling.",
+    "Final boss music just started playing.",
+    "One more push. This is your glow-up arc." ] },
   midway:      { icon: '📈', msgs: [
-    '좋은 흐름이에요, 이대로 쭉',
-    '페이스 잘 잡혔어요',
-    'Let’s be grateful we have a healthy working body 🙏',
-    '숨 한 번 고르고, 다시 페이스대로' ] },
+    'Solid pace. No notes.',
+    "You're in your productive era.",
+    "Halfway to 'I did that.'",
+    "This is the calm, competent montage part." ] },
   empty:       { icon: '🎯', msgs: [
-    '오늘 가장 중요한 일 하나, 정해볼까요?',
-    '하루를 지탱할 한 가지가 아직 비어있어요',
-    'A blank page is just a fresh start' ] },
+    'The floor is lava. Pick a task.',
+    "Plot armor won't write itself.",
+    "Insert Focus here. Literally, there's a box for it.",
+    "Choose your fighter (aka today's one big thing)." ] },
   start:       { icon: '🌱', msgs: [
-    '오늘의 첫 걸음, 지금 내딛어볼까요?',
-    '작은 것부터 시작해봐요',
-    'Smile — you get to do this today',
-    '건강한 몸으로 오늘을 시작할 수 있다는 것, 그 자체로 감사한 일이에요' ] },
+    'New day, low stakes, let’s gooo.',
+    'Baby steps. Very cinematic ones.',
+    "It's giving 'main character starting her day.'",
+    'Coffee first. Then world domination.' ] },
 };
 function cheerMessage() {
   const totalT = state.tasks.length;
@@ -1435,7 +1476,7 @@ function cheerMessage() {
   else bucket = 'start';
 
   const hourStr = new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul', hour: '2-digit', hour12: false });
-  const hourBlock = Math.floor((parseInt(hourStr, 10) % 24) / 4);   // refreshes every 4h so it feels alive, not static
+  const hourBlock = Math.floor((parseInt(hourStr, 10) % 24) / 2);   // refreshes every 2h — changes several times a day, not static
   const seed = todayStr() + bucket + hourBlock;
   let h = 0; for (const c of seed) h = (h * 31 + c.charCodeAt(0)) >>> 0;
   const { icon, msgs } = CHEER[bucket];
@@ -1753,6 +1794,7 @@ initLock();
 applyMood();
 ensureHabits();
 render();
+applyPendingURLSuggestions();
 loadWeather();
 initAuth();
 setInterval(renderClock, 1000);   // live seconds
