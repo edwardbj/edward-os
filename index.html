@@ -18,6 +18,26 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <!--
   ============================================
+  Edward OS v2.9
+  Changes from v2.8:
+  - 배경 사진을 더 밝고 쨍하고 선명하게: filter로 saturate(1.4)/brightness(1.12)/contrast(1.08)
+    적용, 불투명도도 0.5 → 0.62로 올림
+  - 비/흐림/야간 등 날씨 검색어를 어둡고 무드있는 표현("dark", "gloomy") 대신 밝고 화사한 표현으로
+    전부 교체 (예: "rain city colorful umbrellas bright vivid colorful") — 비 오는 날에도 칙칙한
+    사진 대신 화사한 사진이 뜨도록
+  - Pexels 검색에 size=large 필터 추가(저해상도 컷 배제) + photo.src.original을 4K급 폭(3840px)
+    으로 요청하도록 변경 — 흐릿한 이미지 방지, 더 선명하게
+  ============================================
+--><!--
+  ============================================
+  Edward OS v2.8
+  Changes from v2.7:
+  - 날씨 배경 사진이 하루종일 한 장으로 고정되던 문제 수정 — Pexels에서 후보 15장을 받아와서
+    시간(KST 기준 시각)에 따라 다른 사진을 보여주도록 변경. 매시 정각 즈음 자동으로 바뀜
+    (같은 시간 안에서는 안 흔들리게 유지, 15분마다 도는 날씨 폴링에 얹혀서 감지)
+  ============================================
+--><!--
+  ============================================
   Edward OS v2.7
   Changes from v2.6:
   - 앱 아이콘 재디자인: 배경을 파란색 → 강렬한 핑크(#f0207e)로, 로켓도 실제 🚀 이모지에 더 가깝게
@@ -269,6 +289,9 @@
     background-image: var(--photo, none);
     background-size: cover; background-position: center;
     opacity: var(--photo-opacity, 0);
+    /* bright, punchy, high-saturation look even on gloomy-weather photos — never let the
+       scene read as dim/blurry/moody */
+    filter: saturate(1.4) brightness(1.12) contrast(1.08);
     animation: photoDrift 60s ease-in-out infinite;
     transition: opacity 1.4s ease;
   }
@@ -1244,37 +1267,57 @@ function clearScenePhoto() {
   document.documentElement.style.removeProperty('--photo');
   document.documentElement.style.removeProperty('--photo-opacity');
 }
-/* weather code (Open-Meteo) + day/night → a search query that actually looks like the sky outside */
+/* weather code (Open-Meteo) + day/night → a search query. Deliberately steers AWAY from
+   moody/dim/gloomy phrasing even for bad weather — "rainy" still searches for bright, vivid,
+   colorful shots rather than dark broody ones, since the whole point is a cheerful backdrop,
+   not literal weather realism. "bright vivid colorful" is appended to every bucket. */
 function weatherPhotoQuery(code) {
   const hourStr = new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul', hour: '2-digit', hour12: false });
   const night = (parseInt(hourStr, 10) % 24) >= 20 || (parseInt(hourStr, 10) % 24) < 6;
-  if (code === 0)  return night ? 'clear starry night city skyline' : 'clear blue sky sunny';
-  if (code <= 2)   return night ? 'city night sky light clouds' : 'partly cloudy sky sunny';
-  if (code === 3)  return night ? 'overcast night city' : 'overcast cloudy sky skyline';
-  if (code <= 48)  return 'foggy misty city morning';
-  if (code <= 67)  return night ? 'rainy night city street lights' : 'rain window city street';
-  if (code <= 77)  return 'snow city street winter';
-  if (code <= 82)  return night ? 'rain shower night city' : 'rain shower clouds city';
-  return 'thunderstorm dark clouds city';
+  const suffix = ' bright vivid colorful';
+  if (code === 0)  return (night ? 'starry night city skyline lights' : 'clear blue sky sunny') + suffix;
+  if (code <= 2)   return (night ? 'city night skyline lights' : 'sunny sky clouds') + suffix;
+  if (code === 3)  return (night ? 'city skyline night lights' : 'cloudy sky skyline') + suffix;
+  if (code <= 48)  return 'misty city morning sunbeams' + suffix;
+  if (code <= 67)  return (night ? 'rainy city neon lights reflections' : 'rain city colorful umbrellas') + suffix;
+  if (code <= 77)  return 'snow city street festive' + suffix;
+  if (code <= 82)  return (night ? 'rain shower city lights' : 'rain shower rainbow clouds') + suffix;
+  return 'dramatic sky sunset clouds' + suffix;
 }
 let lastPhotoQuery = null;
 async function loadScenePhoto(code) {
   const key = pexelsKey();
   if (!key) return;   // no key set — stay on the animated gradient, no error, no nagging
   const q = weatherPhotoQuery(code);
-  if (q === lastPhotoQuery) return;   // same bucket as last check — don't re-fetch/flicker
+  // bucket by weather query + current hour (KST) so the photo rotates once an hour instead of
+  // staying frozen on the same single image all day
+  const hourStr = new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul', hour: '2-digit', hour12: false });
+  const bucket = q + '|' + hourStr;
+  if (bucket === lastPhotoQuery) return;   // same hour + same weather bucket — don't re-fetch/flicker
   try {
-    const r = await fetch(`https://api.pexels.com/v1/search?query=${encodeURIComponent(q)}&per_page=1&orientation=landscape`,
+    // size=large restricts results to Pexels' large-source-image tier so nothing blurry/low-res
+    // ever gets picked
+    const r = await fetch(`https://api.pexels.com/v1/search?query=${encodeURIComponent(q)}&per_page=15&orientation=landscape&size=large`,
       { headers: { Authorization: key } });
     if (!r.ok) return;   // bad/expired key or rate limit — fail quietly, keep the gradient
     const j = await r.json();
-    const photo = j.photos && j.photos[0];
-    if (!photo) return;
-    const url = (photo.src && (photo.src.large2x || photo.src.large || photo.src.original)) || null;
+    const photos = j.photos || [];
+    if (!photos.length) return;
+    // pick a different photo from the pool each hour (deterministic by hour, not random —
+    // so it doesn't flicker if this function fires more than once inside the same hour)
+    const photo = photos[parseInt(hourStr, 10) % photos.length];
+    // prefer the full-resolution original (sharpest, closest to 4K) — request it at a wide
+    // pixel width via Pexels' own image-resizing params so it stays crisp on big displays
+    let url = null;
+    if (photo.src && photo.src.original) {
+      url = photo.src.original + (photo.src.original.includes('?') ? '&' : '?') + 'auto=compress&cs=tinysrgb&w=3840&q=90';
+    } else if (photo.src) {
+      url = photo.src.large2x || photo.src.large || null;
+    }
     if (!url) return;
     document.documentElement.style.setProperty('--photo', `url("${url}")`);
-    document.documentElement.style.setProperty('--photo-opacity', '0.5');
-    lastPhotoQuery = q;
+    document.documentElement.style.setProperty('--photo-opacity', '0.62');
+    lastPhotoQuery = bucket;
   } catch(e) { /* offline or blocked — keep whatever was showing */ }
 }
 
